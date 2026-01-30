@@ -1,0 +1,20 @@
+[project]
+name = "ai-rag-assistant-v2"
+version = "0.1.0"
+description = "This AI is built around one fixed source of knowledge which is a textbook. Users ask natural questions — it retrieves relevant passages and generates precise answers strictly from that single document only."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "chromadb>=1.4.1",
+    "dagshub>=0.6.5",
+    "dvc[s3]>=3.66.1",
+    "langchain>=1.2.7",
+    "langchain-community>=0.4.1",
+    "mlflow>=3.9.0",
+    "pydantic>=2.12.5",
+    "pydantic-settings>=2.12.0",
+    "pymupdf>=1.26.7",
+    "pytest>=9.0.2",
+    "python-dotenv>=1.2.1",
+    "pyyaml>=6.0.3",
+]
