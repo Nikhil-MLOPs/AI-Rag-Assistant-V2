@@ -1,10 +1,20 @@
+import os
 import json
 import time
 import yaml
 from pathlib import Path
 
+# -------------------------------------------------
+# 🔐 LangSmith tracing — HARD ENFORCEMENT
+# -------------------------------------------------
+os.environ["LANGSMITH_TRACING"] = "true"
+os.environ["LANGCHAIN_PROJECT"] = "AI-Rag-Assistant-V2"
+
 from langchain_ollama import OllamaLLM
-from langchain_core.runnables import RunnablePassthrough
+from langchain_core.runnables import (
+    RunnablePassthrough,
+    RunnableLambda,
+)
 from langchain_core.output_parsers import StrOutputParser
 from langchain_classic.memory import ConversationBufferWindowMemory
 
@@ -13,24 +23,22 @@ from src.rag.guardrails import validate_answer
 from src.retrieval.hybrid import hybrid_retrieve
 from src.utils.logging import setup_logging
 
-logger = setup_logging("rag_chain")
+logger = setup_logging("Rag-Chain")
 
-
-# ======================================================
+# -------------------------------------------------
 # CONFIG
-# ======================================================
+# -------------------------------------------------
 
 with open("configs/rag.yaml", "r", encoding="utf-8") as f:
     RAG_CFG = yaml.safe_load(f)
 
-logger.info("RAG config loaded successfully")
+logger.info("RAG config loaded")
 
+# -------------------------------------------------
+# LLM + MEMORY (WARM START)
+# -------------------------------------------------
 
-# ======================================================
-# LLM (WARM START)
-# ======================================================
-
-logger.info("Initializing Ollama LLM")
+logger.info("Initializing Ollama LLM (warm start)")
 
 LLM = OllamaLLM(
     model=RAG_CFG["llm"]["model"],
@@ -43,17 +51,14 @@ MEMORY = ConversationBufferWindowMemory(
     return_messages=True,
 )
 
-logger.info("LLM and memory initialized")
-
-
-# ======================================================
-# DATA LOADING (LAZY, CI-SAFE)
-# ======================================================
+# -------------------------------------------------
+# DATA LOADING (LAZY + CI SAFE)
+# -------------------------------------------------
 
 def load_chunks():
     """
     Loads cleaned chunks from JSONL.
-    Safe for CI: returns empty tuple if file is missing.
+    Returns empty tuple if file is missing (CI-safe).
     """
     chunks_file = Path("data/processed/chunks/chunks.jsonl")
 
@@ -70,72 +75,85 @@ def load_chunks():
     return tuple(chunks)
 
 
-# ======================================================
+# -------------------------------------------------
 # HELPERS
-# ======================================================
+# -------------------------------------------------
 
-def format_context(docs: list[dict]) -> str:
-    """
-    Extracts text from retrieved docs and formats context.
-    """
+def _load_history(_: dict) -> str:
+    """Conversation history (NOT a knowledge source)."""
+    history = MEMORY.load_memory_variables({}).get("history", [])
+    return "\n".join(str(h) for h in history)
+
+
+def _format_context(docs: list[dict]) -> str:
     texts = [doc["text"] for doc in docs]
-    max_chunks = RAG_CFG["retrieval"]["max_context_chunks"]
-    return "\n\n".join(texts[:max_chunks])
+    return "\n\n".join(
+        texts[: RAG_CFG["retrieval"]["max_context_chunks"]]
+    )
 
 
-# ======================================================
-# RAG CHAIN
-# ======================================================
+# -------------------------------------------------
+# 🔗 RAG CHAIN (streaming + memory + guardrails)
+# -------------------------------------------------
 
 def rag_chain(question: str):
     """
-    Streaming RAG pipeline with hybrid retrieval + guardrails.
+    Streaming, warm-start, memory-aware RAG chain.
     """
+
     logger.info(f"Received question: {question}")
 
-    start = time.perf_counter()
+    # -------------------------------
+    # 🔎 Retrieval
+    # -------------------------------
+    retrieval_start = time.perf_counter()
 
     chunks = load_chunks()
-    logger.info(f"Corpus size for retrieval: {len(chunks)}")
-
     retrieved_docs = hybrid_retrieve(question, chunks)
-    retrieval_time = time.perf_counter() - start
 
+    retrieval_time = time.perf_counter() - retrieval_start
     logger.info(
-        f"Retrieved {len(retrieved_docs)} documents "
+        f"Retrieved {len(retrieved_docs)} docs "
         f"in {retrieval_time:.3f}s"
     )
 
-    context = format_context(retrieved_docs)
+    context = _format_context(retrieved_docs)
 
     chain = (
         {
             "context": lambda _: context,
             "question": RunnablePassthrough(),
+            "history": RunnableLambda(_load_history),
         }
         | MEDICAL_RAG_PROMPT
         | LLM
         | StrOutputParser()
     )
 
-    logger.info("Starting LLM streaming response")
+    # -------------------------------
+    # 🔄 Streaming
+    # -------------------------------
+    full_answer = ""
 
-    answer = ""
     for token in chain.stream(question):
-        answer += token
+        full_answer += token
         yield token
 
-    logger.info("LLM streaming completed")
-
     # -------------------------------
-    # GUARDRAILS
+    # 🛡 Guardrails
     # -------------------------------
-
     sources = [doc["metadata"] for doc in retrieved_docs]
-    final_answer = validate_answer(answer, sources, RAG_CFG)
 
-    if final_answer != answer:
+    final_answer = validate_answer(
+        answer=full_answer,
+        sources=sources,
+        cfg=RAG_CFG,
+    )
+
+    if final_answer != full_answer:
         logger.warning("Guardrails triggered — overriding response")
-        yield final_answer
-    else:
-        logger.info("Response passed guardrails successfully")
+
+    MEMORY.save_context(
+        {"input": question},
+        {"output": final_answer},
+    )
