@@ -11,8 +11,11 @@ def hybrid_retrieve(query: str, docs: tuple):
     """
     docs: tuple of {"text": str, "metadata": dict}
     """
-    texts = tuple(doc["text"] for doc in docs)
 
+    if not docs:
+        return []  # ✅ critical: avoid BM25 on empty corpus
+
+    texts = tuple(doc["text"] for doc in docs)
     scores = _cached_bm25_scores(query, texts)
 
     ranked = sorted(
