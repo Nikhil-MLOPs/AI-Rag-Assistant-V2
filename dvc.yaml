@@ -1,8 +1,0 @@
-stages:
-  ingest:
-    cmd: python -m src.ingestion.ingest
-    deps:
-      - src/ingestion/ingest.py
-      - data/raw/Gale-Encyclopedia.pdf
-    outs:
-      - data/processed/pages/pages.jsonl
