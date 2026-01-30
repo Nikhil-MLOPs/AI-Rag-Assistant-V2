@@ -1,10 +1,39 @@
-# Python-generated files
+# Python
 __pycache__/
-*.py[oc]
-build/
-dist/
-wheels/
-*.egg-info
+*.pyc
 
-# Virtual environments
-.venv
+# Virtual environment
+.venv/
+
+# Environment variables
+.env
+
+# Ignore data directory
+data/
+
+# Re-allow traversal into data
+!data/
+
+# Ignore raw data files
+data/raw/*
+
+# Re-allow traversal into data/raw
+!data/raw/
+
+# Allow DVC metadata files anywhere
+!data/**/*.dvc
+
+# Logs
+logs/
+
+# Pytest
+.pytest_cache/
+
+# OS
+.DS_Store
+
+# Chroma runtime cache (not embeddings output)
+.chroma/
+
+# MLflow local artifacts (remote tracked via DagsHub)
+mlruns/

@@ -1,0 +1,4 @@
+raw_dir: data/raw
+processed_dir: data/processed/pages
+skip_start_pages: 30
+skip_end_after: 4065

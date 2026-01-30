@@ -1,0 +1,6 @@
+[core]
+    remote = dagshub
+['remote "dagshub"']
+    url = s3://dvc
+    endpointurl = https://dagshub.com/Nikhil-MLOPs/AI-Rag-Assistant-V2.s3
+    region = us-east-1
