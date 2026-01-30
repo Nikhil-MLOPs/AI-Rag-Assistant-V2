@@ -1,0 +1,16 @@
+llm:
+  model: llama3.2
+  temperature: 0.2
+  stream: true
+
+retrieval:
+  top_k: 5
+  max_context_chunks: 5
+
+guardrails:
+  require_citations: true
+  refuse_if_no_sources: true
+  confidence_threshold: 0.4
+
+memory:
+  window_size: 5
