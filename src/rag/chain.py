@@ -3,18 +3,19 @@ import json
 import time
 import yaml
 from pathlib import Path
+from typing import List, Dict
+
+from dotenv import load_dotenv
+load_dotenv()
 
 # -------------------------------------------------
-# 🔐 LangSmith tracing — HARD ENFORCEMENT (SAFE)
+# 🔐 LangSmith tracing (SAFE DEFAULTS)
 # -------------------------------------------------
-os.environ.setdefault("LANGCHAIN_TRACING_V2", "true")
-os.environ.setdefault("LANGCHAIN_PROJECT", "AI-Rag-Assistant")
+os.environ.setdefault("LANGSMITH_TRACING", "true")
+os.environ.setdefault("LANGSMITH_PROJECT", "AI-Rag-Assistant-V2")
 
 from langchain_ollama import OllamaLLM
-from langchain_core.runnables import (
-    RunnablePassthrough,
-    RunnableLambda,
-)
+from langchain_core.runnables import RunnablePassthrough, RunnableLambda
 from langchain_core.output_parsers import StrOutputParser
 from langchain_classic.memory import ConversationBufferWindowMemory
 
@@ -23,10 +24,10 @@ from src.rag.guardrails import validate_answer
 from src.retrieval.hybrid import hybrid_retrieve
 from src.utils.logging import setup_logging
 
-logger = setup_logging("rag_chain")
+logger = setup_logging("Rag-Chain")
 
 # ======================================================
-# ENV DETECTION (CRITICAL FOR CI)
+# ENV DETECTION (CI / TEST SAFE)
 # ======================================================
 
 def _is_test_env() -> bool:
@@ -45,7 +46,7 @@ with open("configs/rag.yaml", "r", encoding="utf-8") as f:
 logger.info("RAG config loaded")
 
 # ======================================================
-# LLM + MEMORY (WARM START, PROD ONLY)
+# LLM + MEMORY (PROD ONLY)
 # ======================================================
 
 LLM = None
@@ -67,14 +68,10 @@ else:
     logger.warning("Test/CI environment detected — LLM disabled")
 
 # ======================================================
-# DATA LOADING (LAZY + CI SAFE)
+# DATA LOADING
 # ======================================================
 
-def load_chunks():
-    """
-    Load cleaned chunks from JSONL.
-    Returns empty tuple if missing (CI-safe).
-    """
+def load_chunks() -> tuple[Dict, ...]:
     chunks_file = Path("data/processed/chunks/chunks.jsonl")
 
     if not chunks_file.exists():
@@ -99,11 +96,65 @@ def _load_history(_: dict) -> str:
     history = MEMORY.load_memory_variables({}).get("history", [])
     return "\n".join(str(h) for h in history)
 
-def _format_context(docs: list[dict]) -> str:
-    texts = [doc["text"] for doc in docs]
-    return "\n\n".join(
-        texts[: RAG_CFG["retrieval"]["max_context_chunks"]]
-    )
+
+def _resolve_followup_question(question: str) -> str:
+    """
+    Resolve short / ambiguous follow-up questions using conversation memory
+    BEFORE retrieval.
+    """
+    if MEMORY is None:
+        return question
+
+    history = MEMORY.load_memory_variables({}).get("history", [])
+    if not history:
+        return question
+
+    last_user_questions = [
+        h.content for h in history
+        if getattr(h, "type", "") == "human"
+    ]
+
+    if not last_user_questions:
+        return question
+
+    last_topic = last_user_questions[-1]
+
+    # Heuristic: very short / vague question
+    if len(question.split()) <= 4:
+        resolved = f"{question} in the context of {last_topic}"
+        logger.info(f"Resolved follow-up query: {resolved}")
+        return resolved
+
+    return question
+
+
+def _format_context(docs: List[Dict]) -> str:
+    """
+    Numbered, source-aware context.
+    This is CRITICAL for good answers.
+    """
+    formatted = []
+
+    for i, d in enumerate(docs, 1):
+        meta = d["metadata"]
+        source = f"{meta.get('pdf')} | page {meta.get('page')}"
+        formatted.append(
+            f"[{i}] {d['text']}\nSOURCE: {source}"
+        )
+
+    max_k = RAG_CFG["retrieval"]["max_context_chunks"]
+    return "\n\n".join(formatted[:max_k])
+
+
+def _append_sources(answer: str, docs: List[Dict]) -> str:
+    sources = []
+    for i, d in enumerate(docs, 1):
+        meta = d["metadata"]
+        sources.append(
+            f"[{i}] {meta.get('pdf')} | page {meta.get('page')}"
+        )
+
+    return answer.strip() + "\n\nSources:\n" + "\n".join(sources)
 
 # ======================================================
 # 🔗 RAG CHAIN (FINAL)
@@ -112,20 +163,22 @@ def _format_context(docs: list[dict]) -> str:
 def rag_chain(question: str):
     """
     Streaming RAG chain.
-    - CI-safe
-    - No external calls in tests
-    - Guardrail enforced
+    - Structured context
+    - Real citations
+    - Conversational retrieval
+    - CI safe
     """
 
     logger.info(f"Received question: {question}")
 
     # -------------------------------
-    # 🔎 Retrieval
+    # 🔎 Retrieval (WITH CONTEXT RESOLUTION)
     # -------------------------------
     start = time.perf_counter()
 
     chunks = load_chunks()
-    retrieved_docs = hybrid_retrieve(question, chunks)
+    resolved_question = _resolve_followup_question(question)
+    retrieved_docs = hybrid_retrieve(resolved_question, chunks)
 
     retrieval_time = time.perf_counter() - start
     logger.info(
@@ -133,11 +186,11 @@ def rag_chain(question: str):
     )
 
     # -------------------------------
-    # 🚫 CI SHORT-CIRCUIT (NO LLM)
+    # 🚫 CI SHORT-CIRCUIT
     # -------------------------------
     if _is_test_env():
         logger.warning("Skipping LLM execution in CI/test environment")
-        return  # generator yields nothing → tests expect this
+        return
 
     # -------------------------------
     # 🧠 Context + Chain
@@ -167,16 +220,19 @@ def rag_chain(question: str):
     # -------------------------------
     # 🛡 Guardrails
     # -------------------------------
-    sources = [doc["metadata"] for doc in retrieved_docs]
-
     final_answer = validate_answer(
         answer=full_answer,
-        sources=sources,
+        sources=retrieved_docs,
         cfg=RAG_CFG,
     )
 
-    if final_answer != full_answer:
-        logger.warning("Guardrails triggered — overriding answer")
+    final_answer = _append_sources(final_answer, retrieved_docs)
+
+    # Stream only the appended part
+    if final_answer.startswith(full_answer):
+        yield final_answer[len(full_answer):]
+    else:
+        yield "\n\n" + final_answer
 
     if MEMORY is not None:
         MEMORY.save_context(

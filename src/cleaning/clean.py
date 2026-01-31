@@ -76,20 +76,43 @@ def is_author_line(line: str) -> bool:
         return all(w[0].isupper() for w in words)
     return False
 
+
+# ======================================================
+# 🔵 ADDED: ALPHABET INDEX HEADERS (A–Z)
+# ======================================================
+
+def is_alphabet_header(line: str) -> bool:
+    return len(line) == 1 and line.isalpha() and line.isupper()
+
+
+# ======================================================
+# 🔵 ADDED: CROSS-REFERENCE BLOCK (WITH TERMINATION)
+# ======================================================
+
+def is_cross_reference_block(lines: List[str], idx: int) -> bool:
+    """
+    Cross-reference blocks end IMMEDIATELY
+    when a real topic + Definition starts.
+    """
+
+    # 🔵 ADDITION: if this line starts a topic, it's NOT cross-ref
+    if idx + 1 < len(lines) and lines[idx + 1].lower() == "definition":
+        return False
+
+    if is_cross_reference(lines[idx]):
+        return True
+
+    if idx > 0 and is_cross_reference(lines[idx - 1]):
+        return True
+
+    return False
+
+
 # ======================================================
 # DE-HYPHENATION LOGIC
 # ======================================================
 
 def merge_hyphenated_lines(lines: List[str]) -> List[str]:
-    """
-    Fix PDF word breaks like:
-    gener- + ally  -> generally
-    kid-   + ney   -> kidney
-
-    Rule:
-    - line ends with '-'
-    - next line starts with lowercase letter
-    """
     merged: List[str] = []
     i = 0
 
@@ -110,37 +133,45 @@ def merge_hyphenated_lines(lines: List[str]) -> List[str]:
 
     return merged
 
+
 # ======================================================
-# STRICT TOPIC DETECTION
+# STRICT TOPIC DETECTION (EXTENDED, NOT CHANGED)
 # ======================================================
 
 def detect_topic(lines: List[str], idx: int) -> tuple[str | None, int]:
-    """
-    Topic rules:
-    - Must be followed by 'Definition'
-    - Must not contain 'see'
-    - Must not be author
-    """
+    def is_valid_topic_line(line: str) -> bool:
+        return not (
+            is_cross_reference(line)
+            or is_author_line(line)
+            or is_section_header(line)
+            or ";" in line
+        )
+
+    # 🔵 ADDITION: allow topic even after cross-ref if Definition follows
+    if is_cross_reference_block(lines, idx):
+        return None, 0
 
     line = lines[idx]
 
-    if is_cross_reference(line) or is_author_line(line) or is_section_header(line):
-        return None, 0
+    # ---------- Single-line topic ----------
+    if (
+        idx + 1 < len(lines)
+        and lines[idx + 1].lower() == "definition"
+        and is_valid_topic_line(line)
+    ):
+        return line.strip(), 1
 
-    # Single-line topic
-    if idx + 1 < len(lines) and lines[idx + 1].lower() == "definition":
-        return line, 1
-
-    # Two-line topic
+    # ---------- Two-line topic ----------
     if (
         idx + 2 < len(lines)
         and lines[idx + 2].lower() == "definition"
-        and not is_cross_reference(lines[idx + 1])
-        and not is_author_line(lines[idx + 1])
+        and is_valid_topic_line(line)
+        and is_valid_topic_line(lines[idx + 1])
     ):
-        return f"{line} {lines[idx + 1]}", 2
+        return f"{line} {lines[idx + 1]}".strip(), 2
 
     return None, 0
+
 
 # ======================================================
 # CORE CLEANING + HIERARCHICAL CHUNKING
@@ -164,7 +195,6 @@ def clean_and_chunk(pages: List[Document]) -> List[Document]:
             if clean_line(l)
         ]
 
-        # FIX WORD BREAKS HERE
         raw_lines = merge_hyphenated_lines(raw_lines)
 
         i = 0
@@ -179,14 +209,9 @@ def clean_and_chunk(pages: List[Document]) -> List[Document]:
                 i += 1
                 continue
 
-            # ---------- Topic detection ----------
-            topic, consumed = detect_topic(raw_lines, i)
-            if topic:
-                current_topic = topic
-                current_section = "definition"
-                section_buffers = {"definition": []}
-                inside_resources = False
-                i += consumed + 1
+            # 🔵 Alphabet headers (A, B, C…)
+            if is_alphabet_header(line):
+                i += 1
                 continue
 
             # ---------- Resources ----------
@@ -196,22 +221,39 @@ def clean_and_chunk(pages: List[Document]) -> List[Document]:
                 continue
 
             if inside_resources:
-                i += 1
+                topic, consumed = detect_topic(raw_lines, i)
+                if topic:
+                    inside_resources = False
+                    current_topic = topic
+                    current_section = "definition"
+                    section_buffers = {"definition": []}
+                    i += consumed + 1
+                else:
+                    i += 1
                 continue
 
-            # ---------- Section header ----------
+            # ---------- Topic ----------
+            topic, consumed = detect_topic(raw_lines, i)
+            if topic:
+                current_topic = topic
+                current_section = "definition"
+                section_buffers = {"definition": []}
+                i += consumed + 1
+                continue
+
+            # ---------- Section ----------
             if is_section_header(line):
                 current_section = line.lower()
                 section_buffers.setdefault(current_section, [])
                 i += 1
                 continue
 
-            # ---------- Cross references ----------
-            if is_cross_reference(line):
+            # ---------- Cross refs ----------
+            if current_section is None and is_cross_reference_block(raw_lines, i):
                 i += 1
                 continue
 
-            # ---------- Normal content ----------
+            # ---------- Content ----------
             if current_section:
                 section_buffers[current_section].append(line)
 
@@ -222,8 +264,7 @@ def clean_and_chunk(pages: List[Document]) -> List[Document]:
             if not lines:
                 continue
 
-            text = " ".join(lines)
-            text = text.replace("  ", " ").strip()
+            text = " ".join(lines).replace("  ", " ").strip()
 
             for chunk in splitter.split_text(text):
                 chunks.append(
@@ -240,6 +281,7 @@ def clean_and_chunk(pages: List[Document]) -> List[Document]:
 
     logger.info(f"Generated {len(chunks)} hierarchical chunks")
     return chunks
+
 
 # ======================================================
 # DISK IO
