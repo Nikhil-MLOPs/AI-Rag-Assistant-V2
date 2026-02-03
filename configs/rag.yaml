@@ -1,5 +1,5 @@
 llm:
-  model: llama3.2
+  model: qwen2.5:1.5b
   temperature: 0.2
   stream: true
 

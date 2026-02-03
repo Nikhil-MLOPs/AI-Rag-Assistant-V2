@@ -67,7 +67,9 @@ def is_cross_reference(line: str) -> bool:
 
 
 def is_section_header(line: str) -> bool:
-    return line.lower() in SECTION_HEADERS
+    # 🔵 LOGIC ADDITION: Normalize the line to handle "Header:" or " Header  "
+    normalized = line.lower().strip().rstrip(':').strip()
+    return normalized in SECTION_HEADERS
 
 
 def is_author_line(line: str) -> bool:
@@ -77,34 +79,17 @@ def is_author_line(line: str) -> bool:
     return False
 
 
-# ======================================================
-# 🔵 ADDED: ALPHABET INDEX HEADERS (A–Z)
-# ======================================================
-
 def is_alphabet_header(line: str) -> bool:
     return len(line) == 1 and line.isalpha() and line.isupper()
 
 
-# ======================================================
-# 🔵 ADDED: CROSS-REFERENCE BLOCK (WITH TERMINATION)
-# ======================================================
-
 def is_cross_reference_block(lines: List[str], idx: int) -> bool:
-    """
-    Cross-reference blocks end IMMEDIATELY
-    when a real topic + Definition starts.
-    """
-
-    # 🔵 ADDITION: if this line starts a topic, it's NOT cross-ref
     if idx + 1 < len(lines) and lines[idx + 1].lower() == "definition":
         return False
-
     if is_cross_reference(lines[idx]):
         return True
-
     if idx > 0 and is_cross_reference(lines[idx - 1]):
         return True
-
     return False
 
 
@@ -115,10 +100,8 @@ def is_cross_reference_block(lines: List[str], idx: int) -> bool:
 def merge_hyphenated_lines(lines: List[str]) -> List[str]:
     merged: List[str] = []
     i = 0
-
     while i < len(lines):
         line = lines[i]
-
         if (
             line.endswith("-")
             and i + 1 < len(lines)
@@ -130,12 +113,11 @@ def merge_hyphenated_lines(lines: List[str]) -> List[str]:
         else:
             merged.append(line)
             i += 1
-
     return merged
 
 
 # ======================================================
-# STRICT TOPIC DETECTION (EXTENDED, NOT CHANGED)
+# STRICT TOPIC DETECTION
 # ======================================================
 
 def detect_topic(lines: List[str], idx: int) -> tuple[str | None, int]:
@@ -147,13 +129,11 @@ def detect_topic(lines: List[str], idx: int) -> tuple[str | None, int]:
             or ";" in line
         )
 
-    # 🔵 ADDITION: allow topic even after cross-ref if Definition follows
     if is_cross_reference_block(lines, idx):
         return None, 0
 
     line = lines[idx]
 
-    # ---------- Single-line topic ----------
     if (
         idx + 1 < len(lines)
         and lines[idx + 1].lower() == "definition"
@@ -161,7 +141,6 @@ def detect_topic(lines: List[str], idx: int) -> tuple[str | None, int]:
     ):
         return line.strip(), 1
 
-    # ---------- Two-line topic ----------
     if (
         idx + 2 < len(lines)
         and lines[idx + 2].lower() == "definition"
@@ -177,9 +156,28 @@ def detect_topic(lines: List[str], idx: int) -> tuple[str | None, int]:
 # CORE CLEANING + HIERARCHICAL CHUNKING
 # ======================================================
 
+def _emit_chunks(chunks: List[Document], buffers: Dict[str, List[str]], topic: str, page_meta: dict, splitter: RecursiveCharacterTextSplitter):
+    for section, lines in buffers.items():
+        if not lines:
+            continue
+        
+        text = " ".join(lines).replace("  ", " ").strip()
+        
+        for chunk in splitter.split_text(text):
+            chunks.append(
+                Document(
+                    page_content=chunk,
+                    metadata={
+                        "topic": topic,
+                        "section": section,
+                        "pdf": page_meta["pdf"],
+                        "page": page_meta["page"],
+                    },
+                )
+            )
+
 def clean_and_chunk(pages: List[Document]) -> List[Document]:
     cfg = load_cleaning_config()
-
     splitter = RecursiveCharacterTextSplitter(
         chunk_size=cfg["chunk_size"],
         chunk_overlap=cfg["chunk_overlap"],
@@ -187,6 +185,8 @@ def clean_and_chunk(pages: List[Document]) -> List[Document]:
 
     chunks: List[Document] = []
     current_topic = None
+    current_section = None
+    section_buffers: Dict[str, List[str]] = {}
 
     for page in pages:
         raw_lines = [
@@ -194,12 +194,9 @@ def clean_and_chunk(pages: List[Document]) -> List[Document]:
             for l in page.page_content.splitlines()
             if clean_line(l)
         ]
-
         raw_lines = merge_hyphenated_lines(raw_lines)
 
         i = 0
-        current_section = None
-        section_buffers: Dict[str, List[str]] = {}
         inside_resources = False
 
         while i < len(raw_lines):
@@ -209,13 +206,14 @@ def clean_and_chunk(pages: List[Document]) -> List[Document]:
                 i += 1
                 continue
 
-            # 🔵 Alphabet headers (A, B, C…)
             if is_alphabet_header(line):
                 i += 1
                 continue
 
             # ---------- Resources ----------
             if line.lower() == "resources":
+                _emit_chunks(chunks, section_buffers, current_topic, page.metadata, splitter)
+                section_buffers = {}
                 inside_resources = True
                 i += 1
                 continue
@@ -232,52 +230,44 @@ def clean_and_chunk(pages: List[Document]) -> List[Document]:
                     i += 1
                 continue
 
-            # ---------- Topic ----------
+            # ---------- Topic Detection ----------
             topic, consumed = detect_topic(raw_lines, i)
             if topic:
+                if current_topic:
+                    _emit_chunks(chunks, section_buffers, current_topic, page.metadata, splitter)
+                
                 current_topic = topic
                 current_section = "definition"
                 section_buffers = {"definition": []}
                 i += consumed + 1
                 continue
 
-            # ---------- Section ----------
+            # ---------- Section Header ----------
             if is_section_header(line):
-                current_section = line.lower()
+                # 🔵 LOGIC ADDITION: If we hit a new header, flush the current content immediately
+                if current_section and section_buffers.get(current_section):
+                    _emit_chunks(chunks, section_buffers, current_topic, page.metadata, splitter)
+                    section_buffers[current_section] = []
+
+                # Clean the section name for consistent metadata (removes colons)
+                current_section = line.lower().strip().rstrip(':').strip()
                 section_buffers.setdefault(current_section, [])
                 i += 1
                 continue
 
-            # ---------- Cross refs ----------
-            if current_section is None and is_cross_reference_block(raw_lines, i):
-                i += 1
-                continue
-
-            # ---------- Content ----------
-            if current_section:
+            # ---------- Content Accumulation ----------
+            if current_section and current_topic:
+                if current_section not in section_buffers:
+                    section_buffers[current_section] = []
                 section_buffers[current_section].append(line)
-
+            
             i += 1
 
-        # ---------- Emit chunks ----------
-        for section, lines in section_buffers.items():
-            if not lines:
-                continue
-
-            text = " ".join(lines).replace("  ", " ").strip()
-
-            for chunk in splitter.split_text(text):
-                chunks.append(
-                    Document(
-                        page_content=chunk,
-                        metadata={
-                            "topic": current_topic,
-                            "section": section,
-                            "pdf": page.metadata["pdf"],
-                            "page": page.metadata["page"],
-                        },
-                    )
-                )
+        # Emit page content
+        _emit_chunks(chunks, section_buffers, current_topic, page.metadata, splitter)
+        
+        # Keep keys (state) but clear text for the next page
+        section_buffers = {k: [] for k in section_buffers}
 
     logger.info(f"Generated {len(chunks)} hierarchical chunks")
     return chunks
@@ -293,33 +283,31 @@ if __name__ == "__main__":
     out_dir.mkdir(parents=True, exist_ok=True)
 
     pages: List[Document] = []
-
-    with open(pages_file, "r", encoding="utf-8") as f:
-        for line in f:
-            record = json.loads(line)
-            pages.append(
-                Document(
-                    page_content=record["text"],
-                    metadata=record["metadata"],
+    if pages_file.exists():
+        with open(pages_file, "r", encoding="utf-8") as f:
+            for line in f:
+                record = json.loads(line)
+                pages.append(
+                    Document(
+                        page_content=record["text"],
+                        metadata=record["metadata"],
+                    )
                 )
-            )
 
-    logger.info(f"Loaded {len(pages)} pages")
+        logger.info(f"Loaded {len(pages)} pages")
+        chunks = clean_and_chunk(pages)
 
-    chunks = clean_and_chunk(pages)
-
-    out_file = out_dir / "chunks.jsonl"
-    with open(out_file, "w", encoding="utf-8") as f:
-        for chunk in chunks:
-            f.write(
-                json.dumps(
-                    {
-                        "text": chunk.page_content,
-                        "metadata": chunk.metadata,
-                    },
-                    ensure_ascii=False,
+        out_file = out_dir / "chunks.jsonl"
+        with open(out_file, "w", encoding="utf-8") as f:
+            for chunk in chunks:
+                f.write(
+                    json.dumps(
+                        {
+                            "text": chunk.page_content,
+                            "metadata": chunk.metadata,
+                        },
+                        ensure_ascii=False,
+                    )
+                    + "\n"
                 )
-                + "\n"
-            )
-
-    logger.info(f"Wrote {len(chunks)} chunks to {out_file}")
+        logger.info(f"Wrote {len(chunks)} chunks to {out_file}")

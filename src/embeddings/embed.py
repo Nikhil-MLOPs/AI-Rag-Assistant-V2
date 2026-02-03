@@ -6,6 +6,9 @@ from sentence_transformers import SentenceTransformer
 
 from src.utils.logging import setup_logging
 
+from dotenv import load_dotenv
+load_dotenv()
+
 logger = setup_logging("Embeddings")
 
 

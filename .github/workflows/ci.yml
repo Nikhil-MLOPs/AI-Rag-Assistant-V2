@@ -30,19 +30,16 @@ jobs:
           uv sync
           uv pip install "dvc[s3]"
 
-      - name: Configure DVC (DagsHub)
+      - name: Configure DVC credentials
         env:
           DAGSHUB_TOKEN: ${{ secrets.DAGSHUB_TOKEN }}
         run: |
-          uv run dvc remote add -df dagshub s3://dvc
-          uv run dvc remote modify dagshub endpointurl https://dagshub.com/${{ github.repository_owner }}/AI-Rag-Assistant-V2.s3
-          uv run dvc remote modify dagshub region us-east-1
           uv run dvc remote modify dagshub --local access_key_id $DAGSHUB_TOKEN
           uv run dvc remote modify dagshub --local secret_access_key $DAGSHUB_TOKEN
 
-      - name: Ensure data directories exist
-        run: |
-          mkdir -p data/raw data/processed data/embeddings
+            - name: Ensure data directories exist
+              run: |
+                mkdir -p data/raw data/processed data/embeddings
 
       - name: Pull DVC data
         run: |

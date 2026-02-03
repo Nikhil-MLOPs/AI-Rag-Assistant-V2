@@ -1,0 +1,17 @@
+experiment:
+  run_id: e7d7ea13fe554ffe935702422bfba085
+  experiment_name: Experiment Evaluations
+llm:
+  temperature: 0.1
+retrieval:
+  top_k: 1
+chunking:
+  chunk_size: 1000
+  chunk_overlap: 200
+metrics:
+  avg_precision: 0.2333333333333333
+  avg_faithfulness: 1.0
+  avg_recall: 0.2333333333333333
+  questions_evaluated: 5.0
+  avg_accuracy: 0.5399999999999999
+  avg_refusal_penalty: 0.0
