@@ -30,20 +30,18 @@ jobs:
           uv sync
           uv pip install "dvc[s3]"
 
-      - name: Configure DVC credentials
+      - name: Configure DVC credentials (DagsHub)
+        shell: bash
         env:
           DAGSHUB_TOKEN: ${{ secrets.DAGSHUB_TOKEN }}
         run: |
-          uv run dvc remote modify dagshub --local access_key_id $DAGSHUB_TOKEN
-          uv run dvc remote modify dagshub --local secret_access_key $DAGSHUB_TOKEN
+          set -e
+          uv run dvc remote modify dagshub --local access_key_id "${DAGSHUB_TOKEN}"
+          uv run dvc remote modify dagshub --local secret_access_key "${DAGSHUB_TOKEN}"
 
-            - name: Ensure data directories exist
+            - name: Pull DVC data
               run: |
-                mkdir -p data/raw data/processed data/embeddings
-
-      - name: Pull DVC data
-        run: |
-          uv run dvc pull --force || echo "Some DVC files not found, continuing..."
+                uv run dvc pull --force || echo "Some DVC files not found, continuing..."
 
       - name: Run tests
         run: |
