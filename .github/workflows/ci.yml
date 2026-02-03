@@ -39,9 +39,9 @@ jobs:
           uv run dvc remote modify dagshub --local access_key_id "${DAGSHUB_TOKEN}"
           uv run dvc remote modify dagshub --local secret_access_key "${DAGSHUB_TOKEN}"
 
-            - name: Pull DVC data
-              run: |
-                uv run dvc pull --force || echo "Some DVC files not found, continuing..."
+      - name: Pull DVC data
+        run: |
+          uv run dvc pull --force || echo "Some DVC files not found, continuing..."
 
       - name: Run tests
         run: |
