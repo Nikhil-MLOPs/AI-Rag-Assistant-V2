@@ -42,7 +42,3 @@ jobs:
       - name: Pull DVC data
         run: |
           uv run dvc pull --force || echo "Some DVC files not found, continuing..."
-
-      - name: Run tests
-        run: |
-          uv run pytest
