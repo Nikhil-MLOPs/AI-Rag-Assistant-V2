@@ -45,6 +45,7 @@ if not is_test_env():
     LLM = OllamaLLM(
         model=RAG_CFG["llm"]["model"],
         temperature=RAG_CFG["llm"]["temperature"],
+        base_url=os.getenv("OLLAMA_BASE_URL", "http://localhost:11434"),
         streaming=True,
     )
 

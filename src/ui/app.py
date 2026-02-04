@@ -1,10 +1,11 @@
 import gradio as gr
 import requests
+import os
 
-API_URL = "http://localhost:8000/query"
+API_URL = os.getenv("API_URL", "http://api:8000/query")
 
 # -------------------------------------------------
-# 🎨 CSS (passed to launch, NOT Blocks)
+# 🎨 CSS
 # -------------------------------------------------
 
 CSS = """
@@ -132,4 +133,9 @@ with gr.Blocks() as demo:
 # 🚀 Launch (CSS goes here to avoid warning)
 # -------------------------------------------------
 
-demo.queue().launch(css=CSS, share = True)
+demo.queue().launch(
+    server_name="0.0.0.0",
+    server_port=7860,
+    css=CSS,
+    share=True
+)

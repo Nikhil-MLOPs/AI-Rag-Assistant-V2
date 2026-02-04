@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.pyc
+
+# Virtual env
+.venv/
+
+# Git
+.git/
+.gitignore
+
+# DVC
+.dvc/cache/
+.dvc/tmp/
+
+# Logs & runtime
+logs/
+.env
+.pytest_cache/
+
+# OS
+.DS_Store
+Thumbs.db

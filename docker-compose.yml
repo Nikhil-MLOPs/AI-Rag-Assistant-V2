@@ -1,0 +1,42 @@
+services:
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ai_rag_ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    restart: unless-stopped
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    container_name: ai_rag_api
+    depends_on:
+      - ollama
+    env_file:
+    - .env
+    environment:
+      OLLAMA_BASE_URL: http://ollama:11434
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped
+
+  ui:
+    build:
+      context: .
+      dockerfile: Dockerfile.ui
+    container_name: ai_rag_ui
+    depends_on:
+      - api
+    environment:
+      API_URL: http://api:8000/query
+    ports:
+      - "7860:7860"
+    restart: unless-stopped
+
+volumes:
+  ollama_data:
