@@ -49,6 +49,7 @@ This project leverages a robust MLOps and RAG stack to ensure high performance a
 [User Interface] <--> [FastAPI RAG API] <--> [Hybrid Retriever] <--> [Ollama LLM]
        ^                     |                      |                   |
     Gradio              LangSmith Traces       Vector Store        Grounded Answers
+```
 
 ---
 
